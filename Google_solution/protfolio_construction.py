@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd 
 
 # Data visualization
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style('whitegrid')
 
@@ -25,7 +25,7 @@ from scipy.spatial.distance import cdist
 from scipy.stats import linregress
 import scipy.optimize as sco
 
-from Data_generation import xrets_df, prices_df, tickers
+from Data_generation import prices_df, tickers
 
 # =============================================================================
 # # Load Data from Excel spreadsheet
@@ -104,18 +104,6 @@ def create_pairs(list_of_symbols):
                 pairs.append([x,y])
     return pairs
 
-# create list of grouped clusters
-
-all_pairs = []
-for i in tickers:
-    list_of_symbols = []
-    for k in tickers[i]:
-        list_of_symbols.append(k)
-    pairs = create_pairs(list_of_symbols)
-    all_pairs.append(pairs)   
-
-# The function to parse the training and testing data from one another
-# over the period January 4th 2018 - June 12th 2018
 def parse_data(data, percent):
     X_train = pd.DataFrame()
     X_test = pd.DataFrame()
@@ -127,9 +115,6 @@ def parse_data(data, percent):
         X_train[symbol] = copy_train.values
         X_test[symbol] = copy_test.values
     return X_train, X_test
-
-X_train_xrets, X_test_xrets = parse_data(xrets_df, 0.33)
-X_train, X_test = parse_data(prices_df, 0.33)
 
 def cointegrated(all_pairs, X_train):
     # creating a list to hold cointegrated pairs
@@ -162,153 +147,6 @@ def cointegrated(all_pairs, X_train):
 
     return cointegrated 
 
-cointegrated = cointegrated(all_pairs, X_train)
-
-class statarbi(object):
-    def __init__(self, df1, df2, ma, floor, ceiling, beta_lookback, exit_zscore = 0):
-        # Setting the attributes
-        self.df1 = df1 # Array of the prices for X
-        self.df2 = df2 # Array of the prices for Y
-        self.ma = ma # The lookback period
-        self.floor = floor # The Threshold to buy for the z-score
-        self.ceiling = ceiling # The threshold to sell for the z-score 
-        self.Close = 'Close Long' # Used as a close signal for longs
-        self.Cover = 'Cover Short' # Used as a close signal for shorts
-        self.exit_zscore = exit_zscore
-        self.beta_lookback = beta_lookback # The lookback for the hedge ratio
-    
-    def spread(self):
-        # Create new Dataframe
-        self.df = pd.DataFrame(index = range(0, len(self.df1)))
-        self.df['X'] = self.df1
-        self.df['Y'] = self.df2
-        
-        # Calculate the beta of the pairs
-        ols = linregress(self.df['Y'], self.df['X'])
-        self.df['Beta'] = ols[0]
-        # Calculate the spread 
-        self.df['Spread'] = self.df['Y'] - (self.df['Beta'].rolling(window = self.beta_lookback).mean() * self.df['X'])
-        return self.df.head()
-
-    def signal_generation(self):
-        # Creating z-score
-        self.df['Z-Score'] = (self.df['Spread'] - self.df['Spread'].rolling(window = self.ma).mean()) / self.df['Spread'].rolling(window = self.ma).std()
-        self.df['Prior Z-score'] = self.df['Z-Score'].shift(1)
-        # Creating Buy and Sell signals where to long, short and exit
-        self.df['Longs'] = (self.df['Z-Score'] <= self.floor) * 1.0 # Buy the spread
-        self.df['Shorts'] = (self.df['Z-Score'] >= self.ceiling) * 1.0 # Short the spread
-        self.df['Exit'] = (self.df['Z-Score'] <= self.exit_zscore) * 1.0
-        # track positions with for loop
-        self.df['Long Market'] = 0.0
-        self.df['Short Market'] = 0.0 
-        # Setting variables to track whether or to be long while iterating
-        self.long_market = 0 
-        self.short_market = 0 
-        # Determing when to trade
-        for i, value in enumerate(self.df.iterrows()):
-            if value[1]['Longs'] == 1.0:
-                self.long_market = 1
-            elif value[1]['Shorts'] == 1.0:
-                self.short_market = 1
-            elif value[1]['Exit'] == 1.0:
-                self.long_market = 0
-                self.short_market = 0
-            self.df.iloc[i]['Long Market'] = self.long_market
-            self.df.iloc[i]['Short Market'] = self.short_market
-        return self.df.head()
-    
-    def returns(self, allocation, pair_number):
-        '''
-        Parameters
-        ----------
-        allocation : The amount of Capital for each pair
-        pair_number : String to annotate the plots
-        '''
-        self.allocation = allocation
-        self.pair = pair_number
-        
-        self.portfolio = pd.DataFrame(index = self.df.index)
-        self.portfolio['Positions'] = self.df['Long Market'] - self.df['Short Market']
-        self.portfolio['X'] = 1.0 * self.df['X'] * self.portfolio['Positions']
-        self.portfolio['Y'] = self.df['Y'] * self.portfolio['Positions']
-        self.portfolio['Total'] = self.portfolio['X'] + self.portfolio['Y'] 
-        # Creating a stream of returns
-        self.portfolio['Returns'] = self.portfolio['Total'].pct_change()
-        self.portfolio['Returns'] = self.portfolio['Returns'].fillna(0.0)
-        self.portfolio['Returns'] = self.portfolio['Returns'].replace([np.inf, -np.inf], 0.0)
-        self.portfolio['Returns'] = self.portfolio['Returns'].replace(-1.0, 0.0)
-        # Calculating the Metrics
-        self.mu = (self.portfolio['Returns'].mean())
-        self.sigma = (self.portfolio['Returns'].std())
-        self.portfolio['Win'] = np.where(self.portfolio['Returns'] > 0, 1, 0)
-        self.portfolio['Loss'] = np.where(self.portfolio['Returns'] < 0, 1 ,0)
-        self.wins = self.portfolio['Win'].sum()
-        self.losses = self.portfolio['Loss'].sum()
-        self.tot_trades = self.wins + self.losses
-        # Calculating the Sharpe ratio with an interest rate of 0.75  
-        interest_rate_assumption = 0.75 # Risk free Rate
-        self.sharpe = (self.mu - interest_rate_assumption) / self.sigma
-        # win loss ration
-        self.win_loss = (self.wins / self.losses)
-        self.prob_win = (self.wins / self.tot_trades)
-        self.prob_loss = (self.losses / self.tot_trades)
-        self.avg_return_win = (self.portfolio['Returns'] > 0).mean()
-        self.avg_return_loss = (self.portfolio['Returns'] < 0).mean()
-        # Calculating the Payout ratio
-        self.payout_ratio=(self.avg_return_win/self.avg_return_loss)
-        # Creating the Equity Curve
-        self.portfolio['Returns'] = (self.portfolio['Returns'] + 1.0).cumprod()
-        self.portfolio['Trade Returns'] = (self.portfolio['Total'].pct_change())
-        self.portfolio['Portfolio Value'] = (self.allocation * self.portfolio['Returns'])
-        self.portfolio['Portfolio Returns'] = self.portfolio['Portfolio Value'].pct_change()
-        self.portfolio['Initial Value'] = self.allocation
-        
-        with plt.style.context(['ggplot', 'seaborn-paper']):
-        # Plotting Portfolio Value
-            plt.plot(self.portfolio['Portfolio Value'])
-            plt.plot(self.portfolio['Initial Value'])
-            plt.title('%s Strategy Return' %(self.pair))
-            plt.legend(loc = 0)
-            plt.show()
-        return
-
-equal = pd.DataFrame()
-for k, pair in enumerate(cointegrated):
-    pair_arbi = statarbi(X_test[pair[0]], X_test[pair[1]], 10, -2, 2, 10)
-    pair_arbi.spread()
-    pair_arbi.signal_generation()
-    pair_arbi.returns(90000/len(cointegrated), str(pair))
-    equal[k] = pair_arbi.portfolio['Portfolio Value']
-    
-equal['Cash'] = 10000   
-equal['Total Portfolio Value'] =   equal.sum(axis = 1)
-equal['Returns'] = np.log(equal['Total Portfolio Value'] / equal['Total Portfolio Value'].shift(1))
-
-# Mean, sigma and Sharpe
-equal_mu = equal['Returns'].mean()
-equal_sigma = equal['Returns'].std()
-
-# In as of December 2017, the fed funds rate was 1.5%. We'll use this as our interest rate assumption. 
-rate = 0.015
-equal_sharpe = round((equal_mu - rate) / equal_sigma, 2)
-
-plt.figure(figsize = (10,6))
-plt.plot(equal['Total Portfolio Value'])
-plt.title('Equally Weighted Portfolio Equity Curve')
-plt.show()
-
-#-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-## Efficient Frontier 
-
-returns = pd.DataFrame()
-for i in equal:
-    returns[i] = np.log(equal[i] / equal[i].shift(1))
-
-returns = returns.drop('Cash', axis = 1)
-returns = returns.drop('Returns', axis = 1)
-returns = returns.drop('Total Portfolio Value', axis = 1)
-
 def efficient_frontier(returns, rate = 0.015):
     # Create lists with returns, variance and sharpe ratios
     p_returns = []
@@ -335,71 +173,16 @@ def efficient_frontier(returns, rate = 0.015):
         p_volatility = np.array(p_volatility)
         p_sharpe = np.array(p_sharpe)
         # plot to find efficient returns
-        plt.figure(figsize = (10,6))
-        plt.scatter(p_volatility, p_returns, c = p_sharpe, marker = 'o')
-        plt.xlabel('Expected Volatility')
-        plt.ylabel('Efficient Frontier')
-        plt.colorbar(label = 'Sharpe Ratio')
-        plt.show()
+# =============================================================================
+#         plt.figure(figsize = (10,6))
+#         plt.scatter(p_volatility, p_returns, c = p_sharpe, marker = 'o')
+#         plt.xlabel('Expected Volatility')
+#         plt.ylabel('Efficient Frontier')
+#         plt.colorbar(label = 'Sharpe Ratio')
+#         #plt.show()
+# =============================================================================
         
     return 
-
-efficient_frontier(returns.fillna(0))
-
-weights = np.random.random(len(returns.columns))
-weights /= np.sum(weights)
- 
-def stats(weights, rate = 0.015):
-    weights = np.array(weights)
-    p_returns = np.sum(returns.mean()*weights)*252
-    p_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov()*252, weights)))
-    p_sharpe = (p_returns - rate) / p_volatility
-
-    return np.array([p_returns,p_volatility,p_sharpe])   
-
-stats(weights)
-# function for optimization
-def minimize(weights):
-    return -stats(weights)[2]
-
-minimize(weights)
-
-# Finding the optimal weights
-def optimal_weights(weights):
-    # variables for optimization
-    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-    bounds = tuple((0,1) for x in range(len(returns.columns)))
-    starting_weights = len(returns.columns) * [1 / len(returns.columns)]
-    most_optimal = sco.minimize(minimize, starting_weights, method='SLSQP', bounds = bounds, constraints = constraints)
-    best_weights = most_optimal['x'].round(3)
-    return best_weights, print('Weights:',best_weights)
-
-optimal_weights = optimal_weights(weights)
-
-investment =  90000
-p_efficient_frontier = pd.DataFrame()
-for q, pair in enumerate(cointegrated):
-    pair_arbi_frontier = statarbi(X_test[pair[0]], X_test[pair[1]], 10, -2, 2, 10)
-    pair_arbi_frontier.spread()
-    pair_arbi_frontier.signal_generation()
-    pair_arbi_frontier.returns(round(investment * optimal_weights[0][q],2), str(pair))
-    p_efficient_frontier[q] = pair_arbi_frontier.portfolio['Portfolio Value']
-    
-p_efficient_frontier['Cash'] = 10000   
-p_efficient_frontier['Total Portfolio Value'] =   p_efficient_frontier.sum(axis = 1)
-p_efficient_frontier['Returns'] = np.log(p_efficient_frontier['Total Portfolio Value'] / p_efficient_frontier['Total Portfolio Value'].shift(1))
-
-p_efficient_frontier_mu = p_efficient_frontier['Returns'].mean()
-p_efficient_frontier_sigma = p_efficient_frontier['Returns'].std()
-#recall that we initialized our interest assumption earlier
-p_efficient_frontier_sharpe = (p_efficient_frontier_mu - rate) / p_efficient_frontier_sigma
-
-plt.figure(figsize=(10,6))
-plt.plot(p_efficient_frontier['Total Portfolio Value'])
-plt.title('Efficient Frontier Portfolio Equity Curve')
-plt.show()
-
-#-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class GMM_randomforests(object):
     def __init__(self, historical_rets_train, historical_rets_test, base_portfolio_rets, gmm_components, df, base_portfolio_df):
@@ -478,37 +261,39 @@ class GMM_randomforests(object):
         self.plotTitle = plotTitle
         data = pd.DataFrame({'Volatility' : self.volatility, 'Regime': self.gmm_historical_predictions, 'Returns': self.historical_rets_train})
 
-        with plt.style.context(['classic','seaborn-paper']):
-            fig,ax = plt.subplots(figsize = (15,10), nrows = 1, ncols = 2)
-            
-        left = 0.125 # the left side of the subplots of the figure
-        right = 0.9 # the right side of the subplots of the figure
-        bottom = .125 # the bottom of the subplots of the figure
-        top = 0.9 # the top of the subplots of the figure
-        wspace = .5 # the amount of width reserved for blank space between subplots
-        hspace = 1.1 # the amount of height reserved for white space between subplots 
+# =============================================================================
+#         with plt.style.context(['classic','seaborn-paper']):
+#             fig,ax = plt.subplots(figsize = (15,10), nrows = 1, ncols = 2)
+#             
+#         left = 0.125 # the left side of the subplots of the figure
+#         right = 0.9 # the right side of the subplots of the figure
+#         bottom = .125 # the bottom of the subplots of the figure
+#         top = 0.9 # the top of the subplots of the figure
+#         wspace = .5 # the amount of width reserved for blank space between subplots
+#         hspace = 1.1 # the amount of height reserved for white space between subplots 
+#         
+#         # function that adjusts subplots using the above paramters
+#         plt.subplots_adjust(
+#         left = left,
+#         bottom = bottom,
+#         right = right,
+#         top = top,
+#         wspace = wspace,
+#         hspace = hspace
+#         )
+#         
+#         plt.suptitle(self.plotTitle, y = 1, fontsize=20)
+#         
+#         plt.subplot(121)
+#         sns.swarmplot(x = 'Regime', y = 'Volatility', data = data)#,ax=ax[0][0])
+#         plt.title('Regime to Volatility')
+#         
+#         plt.subplot(122)
+#         sns.swarmplot(x = 'Regime', y = 'Returns', data = data)#, ax=ax[0][1])
+#         plt.title('Regime to Returns')
+#         plt.tight_layout()
+# =============================================================================
         
-        # function that adjusts subplots using the above paramters
-        plt.subplots_adjust(
-        left = left,
-        bottom = bottom,
-        right = right,
-        top = top,
-        wspace = wspace,
-        hspace = hspace
-        )
-        
-        plt.suptitle(self.plotTitle, y = 1, fontsize=20)
-        
-        plt.subplot(121)
-        sns.swarmplot(x = 'Regime', y = 'Volatility', data = data)#,ax=ax[0][0])
-        plt.title('Regime to Volatility')
-        
-        plt.subplot(122)
-        sns.swarmplot(x = 'Regime', y = 'Returns', data = data)#, ax=ax[0][1])
-        plt.title('Regime to Returns')
-        plt.tight_layout()
-        plt.show()
         return
         
     def train_random_forests(self):
@@ -577,35 +362,7 @@ class GMM_randomforests(object):
         
         return 
 
-historical = pd.DataFrame()
-hist_rets = pd.DataFrame()
-for k, pair in enumerate(cointegrated):
-    hist_pair_arbi = statarbi(X_train[pair[0]], X_train[pair[1]], 10, -2, 2, 10)
-    hist_pair_arbi.spread()
-    hist_pair_arbi.signal_generation()
-    hist_pair_arbi.returns(90000/len(cointegrated), str(pair))
-    historical[k] = hist_pair_arbi.portfolio['Portfolio Value']
-    hist_rets[k] = hist_pair_arbi.portfolio['Returns']
-
-hist_rets_train, hist_rets_test = train_test_split(hist_rets, test_size = 0.33)
- 
-regime_predictions = pd.DataFrame()
-for p, pair in enumerate(cointegrated):
-    hist_pair_arbi = statarbi(X_train[pair[0]], X_train[pair[1]], 10, -2, 2, 10)
-    hist_pair_arbi.spread()
-    hist_pair_arbi.signal_generation()
-    hist_pair_arbi.returns(90000/len(cointegrated), str(pair))
-    pair_arbi = statarbi(X_test[pair[0]], X_test[pair[1]], 10, -2, 2, 10)
-    pair_arbi.spread()
-    pair_arbi.signal_generation()
-    pair_arbi.returns(90000/len(cointegrated), str(pair))
-    gmm_pair = GMM_randomforests(hist_rets_train[p], hist_rets_test[p], pair_arbi.portfolio['Returns'], 2, hist_pair_arbi.df, pair_arbi.df)
-    gmm_pair.analyze_historical_regimes()
-    gmm_pair.historical_regime_returns_volatility(str(pair))
-    gmm_pair.train_random_forests()
-    regime_predictions[p] = gmm_pair.base_portfolio_predictions
-
-class statarb_update(object):
+class statarb(object):
 #np.seterr(divide='ignore',invalid='ignore')
 
     def __init__(self, df1, df2, ptype, ma, floor, ceiling, beta_lookback, regimePredictions, p2Objective, avoid1 = 1, target1 = 0, exit_zscore = 0):
@@ -779,8 +536,8 @@ class statarb_update(object):
             self.losses = self.portfolio['Loss'].sum()
             self.total_trades = self.wins + self.losses
             #calculating sharpe ratio with interest rate of
-            #interest_rate_assumption=0.75
-            #self.sharp = (self.mu - interest_rate_assumption) / self.sigma
+            interest_rate_assumption=0.75
+            self.sharp = (self.mu - interest_rate_assumption) / self.sigma
             #win loss ratio;
             self.win_loss_ratio = (self.wins / self.losses)
             #probability of win
@@ -800,19 +557,21 @@ class statarb_update(object):
             self.portfolio['Portfolio Returns'] = self.portfolio['Portfolio Value'].pct_change()
             self.portfolio['Initial Value'] = self.allocation
             
-            with plt.style.context(['ggplot','seaborn-paper']):
-                #Plotting Portfolio Value
-                plt.plot(self.portfolio['Portfolio Value'])
-                plt.plot(self.portfolio['Initial Value'])
-                plt.title('%s Strategy Returns '%(self.pair))
-                plt.legend(loc=0)
-                plt.show()
+# =============================================================================
+#             with plt.style.context(['ggplot','seaborn-paper']):
+#                 #Plotting Portfolio Value
+#                 plt.plot(self.portfolio['Portfolio Value'])
+#                 plt.plot(self.portfolio['Initial Value'])
+#                 plt.title('%s Strategy Returns '%(self.pair))
+#                 plt.legend(loc=0)
+# =============================================================================
+                
 
         elif self.ptype==2:
             
             self.allocation = allocation
             self.pair = pair_number
-            self.portfolio = pd.DataFrame(index=self.df.index)
+            self.portfolio = pd.DataFrame(index = self.df.index)
             self.portfolio['Positions'] =self.df['Longs'] - self.df['Shorts']
             self.portfolio['X'] = -1.0 * self.df['X'] * self.portfolio['Positions']
             self.portfolio['Y'] = self.df['Y' ] * self.portfolio['Positions']
@@ -832,8 +591,8 @@ class statarb_update(object):
             self.losses = self.portfolio['Loss'].sum()
             self.total_trades = self.wins + self.losses
             #calculating sharpe ratio with interest rate of
-            #interest_rate_assumption=0.75
-            #self.sharp = (self.mu - interest_rate_assumption) / self.sigma
+            interest_rate_assumption=0.75
+            self.sharp = (self.mu - interest_rate_assumption) / self.sigma
             #win loss ratio;
             self.win_loss_ratio = (self.wins / self.losses)
             #probability of win
@@ -853,77 +612,255 @@ class statarb_update(object):
             self.portfolio['Portfolio Returns'] = self.portfolio['Portfolio Value'].pct_change()
             self.portfolio['Initial Value'] = self.allocation
             
-            with plt.style.context(['ggplot','seaborn-paper']):
-                #Plotting Portfolio Value
-                plt.plot(self.portfolio['Portfolio Value'])
-                plt.plot(self.portfolio['Initial Value'])
-                plt.title('%s Strategy Returns '%(self.pair))
-                plt.legend(loc = 0)
-                plt.show()
+# =============================================================================
+#             with plt.style.context(['ggplot','seaborn-paper']):
+#                 #Plotting Portfolio Value
+#                 plt.plot(self.portfolio['Portfolio Value'])
+#                 plt.plot(self.portfolio['Initial Value'])
+#                 plt.title('%s Strategy Returns '%(self.pair))
+#                 plt.legend(loc = 0)
+# =============================================================================
+                
 
         return 
     
-bottom_up = pd.DataFrame()
-for t, pair in enumerate(cointegrated):
-    bot_pair_arbi = statarb_update(X_test[pair[0]], X_test[pair[1]], 2, 10, -2, 2, 10, regime_predictions[t], 'Target')
-    bot_pair_arbi.create_spread()
-    bot_pair_arbi.generate_signals()
-    bot_pair_arbi.create_returns(investment/len(cointegrated), str(pair))
-    bottom_up[t] = bot_pair_arbi.portfolio['Portfolio Value']
     
-bottom_up['Cash'] = 10000   
-bottom_up['Total Portfolio Value'] =   bottom_up.sum(axis = 1)
-bottom_up['Returns'] = np.log(bottom_up['Total Portfolio Value'] / bottom_up['Total Portfolio Value'].shift(1))
-
-bottom_up_mu = bottom_up['Returns'].mean()
-bottom_up_sigma = bottom_up['Returns'].std()
-#recall that we initialized our interest assumption earlier
-bottom_up_sharpe = (bottom_up_mu - rate) / bottom_up_sigma
-
-plt.figure(figsize=(10,6))
-plt.plot(bottom_up['Total Portfolio Value'])
-plt.title('Bottom Up Portfolio Equity Curve')
-plt.show()  
-
-spo_portfolio = pd.DataFrame()
-for n, pair in enumerate(cointegrated):
-    spo_pair_arbi = statarb_update(X_test[pair[0]], X_test[pair[1]], 2, 6, -2, 2, 6, regime_predictions[n], 'Target')
-    spo_pair_arbi.create_spread()
-    spo_pair_arbi.generate_signals()
-    spo_pair_arbi.create_returns(round(investment * optimal_weights[0][n],2), str(pair))
-    spo_portfolio[n] = spo_pair_arbi.portfolio['Portfolio Value']
+#------------------------------------------------------------------------------------------------------   
     
-spo_portfolio['Cash'] = 10000   
-spo_portfolio['Total Portfolio Value'] =   spo_portfolio.sum(axis = 1)
-spo_portfolio['Returns'] = np.log(spo_portfolio['Total Portfolio Value'] / spo_portfolio['Total Portfolio Value'].shift(1))
+    
+def cointegration(tickers):
+    
+    all_pairs = []
+    for i in tickers:
+        list_of_symbols = []
+        for k in tickers[i]:
+            list_of_symbols.append(k)
+        pairs = create_pairs(list_of_symbols)
+        all_pairs.append(pairs)   
 
-spo_portfolio_mu = spo_portfolio['Returns'].mean()
-spo_portfolio_sigma = spo_portfolio['Returns'].std()
-#recall that we initialized our interest assumption earlier
-spo_portfolio_sharpe = (spo_portfolio_mu - rate) / spo_portfolio_sigma
+    X_train, X_test = parse_data(prices_df, 0.50) 
+        
+    cointegration = cointegrated(all_pairs, X_train)  
+    
+    return cointegration, X_train, X_test
 
-plt.figure(figsize = (10,6))
-plt.plot(spo_portfolio['Total Portfolio Value'])
-plt.title('SPO Portfolio Equity Curve')
-plt.show() 
+cointegrated, X_train, X_test = cointegration(tickers)
 
-#list to hold portfolio names
-names = ['Equally Weighted','Efficient Frontier','Bottom Up','SPO Framework']
-#variable to hold column name
-column_name = 'Sharpe Ratio'
-#list to hold Sharpe Ratios
-sharpes = [equal_sharpe, p_efficient_frontier_sharpe, bottom_up_sharpe, spo_portfolio_sharpe]
-#creating dataframe to compare Sharpe Ratios of Portfolios
-portfolio_assessment = pd.DataFrame({column_name:sharpes},index = names)
+def regime_prediction(cointegrated, X_test, X_train, investment, rate = 0.015):
+    historical = pd.DataFrame()
+    hist_rets = pd.DataFrame()
+    for k, pair in enumerate(cointegrated):
+        hist_pair_arbi = statarb(X_train[pair[0]], X_train[pair[1]], 1, 10, -2, 2, 10, hist_rets, 'None')
+        hist_pair_arbi.create_spread()
+        hist_pair_arbi.generate_signals()
+        hist_pair_arbi.create_returns(investment/len(cointegrated), str(pair))
+        historical[k] = hist_pair_arbi.portfolio['Portfolio Value']
+        hist_rets[k] = hist_pair_arbi.portfolio['Returns']
+    
+    hist_rets_train, hist_rets_test = train_test_split(hist_rets, test_size = 0.33)
+     
+    regime_predictions = pd.DataFrame()
+    for p, pair in enumerate(cointegrated):
+        hist_pair_arbi = statarb(X_train[pair[0]], X_train[pair[1]], 1, 10, -2, 2, 10, hist_rets, 'None')
+        hist_pair_arbi.create_spread()
+        hist_pair_arbi.generate_signals()
+        hist_pair_arbi.create_returns(investment/len(cointegrated), str(pair))
+        pair_arbi = statarb(X_test[pair[0]], X_test[pair[1]], 1, 10, -2, 2, 10, hist_rets, 'None')
+        pair_arbi.create_spread()
+        pair_arbi.generate_signals()
+        pair_arbi.create_returns(investment/len(cointegrated), str(pair))
+        gmm_pair = GMM_randomforests(hist_rets_train[p], hist_rets_test[p], pair_arbi.portfolio['Returns'], 2, hist_pair_arbi.df, pair_arbi.df)
+        gmm_pair.analyze_historical_regimes()
+        gmm_pair.historical_regime_returns_volatility(str(pair))
+        gmm_pair.train_random_forests()
+        regime_predictions[p] = gmm_pair.base_portfolio_predictions
 
-#creating list to hold ending values of portfolios
-#We pass in 1 into the tail method because it represents the last index position
-portfolio_values = [equal['Total Portfolio Value'].tail(1).values.astype(int), p_efficient_frontier['Total Portfolio Value'].tail(1).values.astype(int), bottom_up['Total Portfolio Value'].tail(1).values.astype(int),spo_portfolio['Total Portfolio Value'].tail(1).values.astype(int)]
-#creating dataframe to hold ending value of portfolios
-pd.DataFrame({'Ending Portfolio Values':portfolio_values},index=names)
- 
+    return regime_predictions
+
+regime_predictions = regime_prediction(cointegrated, X_test, X_train, 90000)
+
+def equal_p(cointegrated, regime_predictions, X_test, investment, rate = 0.015):
+    
+    equal = pd.DataFrame()
+    for k, pair in enumerate(cointegrated):
+        pair_arbi = statarb(X_test[pair[0]], X_test[pair[1]], 1, 10, -2, 2, 10, regime_predictions, 'None')
+        pair_arbi.create_spread()
+        pair_arbi.generate_signals()
+        pair_arbi.create_returns(investment/len(cointegrated), str(pair))
+        equal[k] = pair_arbi.portfolio['Portfolio Value']
+        
+    equal['Cash'] = 10000   
+    equal['Total Portfolio Value'] =   equal.sum(axis = 1)
+    equal['Returns'] = np.log(equal['Total Portfolio Value'] / equal['Total Portfolio Value'].shift(1))
+    
+    # Mean, sigma and Sharpe
+    equal_mu = equal['Returns'].mean()
+    equal_sigma = equal['Returns'].std()
+    
+    # In as of December 2017, the fed funds rate was 1.5%. We'll use this as our interest rate assumption. 
+    equal_sharpe = round((equal_mu - rate) / equal_sigma, 2)
+    
+    
+    return equal, equal_sharpe, equal_sigma
+
+equal, equal_sharpe, equal_sigma = equal_p(cointegrated, regime_predictions, X_test, 90000)
+#-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Efficient Frontier 
+
+def efficient_frontier_p(equal, cointegrated, regime_predictions, X_test, investment, rate = 0.015):
+    returns = pd.DataFrame()
+    for i in equal:
+        returns[i] = np.log(equal[i] / equal[i].shift(1))
+    
+    returns = returns.drop('Cash', axis = 1)
+    returns = returns.drop('Returns', axis = 1)
+    returns = returns.drop('Total Portfolio Value', axis = 1)    
+        
+    efficient_frontier(returns.fillna(0))
+    
+    weights = np.random.random(len(returns.columns))
+    weights /= np.sum(weights)    
+    
+    def stats(weights, rate = 0.015):
+        weights = np.array(weights)
+        p_returns = np.sum(returns.mean()*weights)*252
+        p_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov()*252, weights)))
+        p_sharpe = (p_returns - rate) / p_volatility
+    
+        return np.array([p_returns,p_volatility,p_sharpe])   
+
+    # function for optimization
+    def minimize_weights(weights):
+        return -stats(weights)[2]
+    
+    # Finding the optimal weights
+    def optimal_weights(weights):
+        # variables for optimization
+        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+        bounds = tuple((0,1) for x in range(len(returns.columns)))
+        starting_weights = len(returns.columns) * [1 / len(returns.columns)]
+        most_optimal = sco.minimize(minimize_weights, starting_weights, method='SLSQP', bounds = bounds, constraints = constraints)
+        best_weights = most_optimal['x'].round(3)
+        return best_weights
+    
+    stats(weights, returns)    
+    
+    minimize_weights(weights)    
+        
+    optimal_w = optimal_weights(weights)
+    
+    p_efficient_frontier = pd.DataFrame()
+    for q, pair in enumerate(cointegrated):
+        pair_arbi_frontier = statarb(X_test[pair[0]], X_test[pair[1]], 1, 10, -2, 2, 10, regime_predictions, 'None')
+        pair_arbi_frontier.create_spread()
+        pair_arbi_frontier.generate_signals()
+        pair_arbi_frontier.create_returns(round(investment * optimal_w[q],2), str(pair))
+        p_efficient_frontier[q] = pair_arbi_frontier.portfolio['Portfolio Value']
+        
+    p_efficient_frontier['Cash'] = 10000   
+    p_efficient_frontier['Total Portfolio Value'] =   p_efficient_frontier.sum(axis = 1)
+    p_efficient_frontier['Returns'] = np.log(p_efficient_frontier['Total Portfolio Value'] / p_efficient_frontier['Total Portfolio Value'].shift(1))
+    
+    p_efficient_frontier_mu = p_efficient_frontier['Returns'].mean()
+    p_efficient_frontier_sigma = p_efficient_frontier['Returns'].std()
+    
+    p_efficient_frontier_sharpe = (p_efficient_frontier_mu - rate) / p_efficient_frontier_sigma
+    
+# =============================================================================
+#     plt.figure(figsize=(10,6))
+#     plt.plot(p_efficient_frontier['Total Portfolio Value'])
+#     plt.title('Efficient Frontier Portfolio Equity Curve')
+#     #plt.show()
+# =============================================================================
+    
+    return p_efficient_frontier, p_efficient_frontier_sharpe, optimal_w
+
+p_efficient_frontier, p_efficient_frontier_sharpe, optimal_w  = efficient_frontier_p(equal, cointegrated, regime_predictions, X_test, 90000)
+#-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
+def bot_up_opti(cointegrated, regime_predictions, X_test, investment, rate = 0.015):
+    
+    bottom_up = pd.DataFrame()
+    for t, pair in enumerate(cointegrated):
+        bot_pair_arbi = statarb(X_test[pair[0]], X_test[pair[1]], 2, 10, -2, 2, 10, regime_predictions[t], 'Target')
+        bot_pair_arbi.create_spread()
+        bot_pair_arbi.generate_signals()
+        bot_pair_arbi.create_returns(investment/len(cointegrated), str(pair))
+        bottom_up[t] = bot_pair_arbi.portfolio['Portfolio Value']
+        
+    bottom_up['Cash'] = 10000   
+    bottom_up['Total Portfolio Value'] =   bottom_up.sum(axis = 1)
+    bottom_up['Returns'] = np.log(bottom_up['Total Portfolio Value'] / bottom_up['Total Portfolio Value'].shift(1))
+    
+    bottom_up_mu = bottom_up['Returns'].mean()
+    bottom_up_sigma = bottom_up['Returns'].std()
+    #recall that we initialized our interest assumption earlier
+    bottom_up_sharpe = (bottom_up_mu - rate) / bottom_up_sigma
+    
+# =============================================================================
+#     plt.figure(figsize=(10,6))
+#     plt.plot(bottom_up['Total Portfolio Value'])
+#     plt.title('Bottom Up Portfolio Equity Curve')
+#     #plt.show()  
+# =============================================================================
+
+    return  bottom_up, bottom_up_sharpe, bottom_up_sigma
+
+bottom_up, bottom_up_sharpe, bottom_up_sigma = bot_up_opti(cointegrated, X_train, X_test, 90000)
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+def spo(cointegrated, regime_predictions, X_test, optimal_w, investment, rate = 0.015):
+
+    spo_portfolio = pd.DataFrame()
+    for n, pair in enumerate(cointegrated):
+        spo_pair_arbi = statarb(X_test[pair[0]], X_test[pair[1]], 2, 6, -2, 2, 6, regime_predictions[n], 'Target')
+        spo_pair_arbi.create_spread()
+        spo_pair_arbi.generate_signals()
+        spo_pair_arbi.create_returns(round(investment * optimal_w[n],2), str(pair))
+        spo_portfolio[n] = spo_pair_arbi.portfolio['Portfolio Value']
+        
+    spo_portfolio['Cash'] = 10000   
+    spo_portfolio['Total Portfolio Value'] =   spo_portfolio.sum(axis = 1)
+    spo_portfolio['Returns'] = np.log(spo_portfolio['Total Portfolio Value'] / spo_portfolio['Total Portfolio Value'].shift(1))
+    
+    spo_portfolio_mu = spo_portfolio['Returns'].mean()
+    spo_portfolio_sigma = spo_portfolio['Returns'].std()
+    #recall that we initialized our interest assumption earlier
+    spo_portfolio_sharpe = (spo_portfolio_mu - rate) / spo_portfolio_sigma
+    
+# =============================================================================
+#     plt.figure(figsize = (10,6))
+#     plt.plot(spo_portfolio['Total Portfolio Value'])
+#     plt.title('SPO Portfolio Equity Curve')
+#     #plt.show() 
+# =============================================================================
+    
+    return spo_portfolio, spo_portfolio_sharpe, spo_portfolio_sigma
+
+spo_portfolio, spo_portfolio_sharpe, spo_portfolio_sigma = spo(cointegrated, regime_predictions, X_test, optimal_w, 90000)
+
+def analyze(spo_portfolio, spo_portfolio_sharpe, bottom_up, bottom_up_sharpe, p_efficient_frontier, p_efficient_frontier_sharpe, equal, equal_sharpe):
+    #list to hold portfolio names
+    names = ['Equally Weighted','Efficient Frontier','Bottom Up','SPO Framework']
+    #variable to hold column name
+    column_name = 'Sharpe Ratio'
+    #list to hold Sharpe Ratios
+    sharpes = [equal_sharpe, p_efficient_frontier_sharpe, bottom_up_sharpe, spo_portfolio_sharpe]
+    #creating dataframe to compare Sharpe Ratios of Portfolios
+    portfolio_asses = pd.DataFrame({column_name:sharpes},index = names)
+    
+    #creating list to hold ending values of portfolios
+    #We pass in 1 into the tail method because it represents the last index position
+    portfolio_values = [equal['Total Portfolio Value'].tail(1).values.astype(int), p_efficient_frontier['Total Portfolio Value'].tail(1).values.astype(int), bottom_up['Total Portfolio Value'].tail(1).values.astype(int),spo_portfolio['Total Portfolio Value'].tail(1).values.astype(int)]
+    #creating dataframe to hold ending value of portfolios
+    portfolio_sharpe = pd.DataFrame({'Ending Portfolio Values':portfolio_values},index=names)
+    
+    return portfolio_asses, portfolio_sharpe
+
+portfolio_sharpe, portfolio_values = analyze(spo_portfolio, spo_portfolio_sharpe, bottom_up, bottom_up_sharpe, p_efficient_frontier, p_efficient_frontier_sharpe, equal, equal_sharpe)
 
 
 
