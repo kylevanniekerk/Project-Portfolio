@@ -8,12 +8,12 @@ Created on Wed Mar 24 11:38:56 2021
 import uvicorn 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Dict
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd 
-from Data_generation import dataMGMT
-from protfolio_construction import cointegration, equal_p, efficient_frontier_p, bot_up_opti, spo, analyze, regime_prediction
+from Data_generation import dataMGMT, ETF_df
+from protfolio_construction import cointegration, equal_p, efficient_frontier_p, bot_up_opti, spo, analyze, regime_prediction, etf_strat
 
 
 web = FastAPI()
@@ -30,14 +30,10 @@ web = FastAPI()
 
 class userinput(BaseModel):
     Risk_tolerance: int
-    Age: int
     investment_amount: int
-    symbols: Dict[str, list] = {'Government': [],
-                                'Candian Stocks': [],
+    weights_ETF: list = [0.06, 0.1, 0.3, 0.08, 0.16, 0.3]
+    symbols: Dict[str, list] = {'ETF Portfolio': ["XIC.TO", "VUN.TO", "AVUV", "XEF.TO", "AVDV", "XEC.TO"],
                                 'US Stocks': [],
-                                'US reits': [],
-                                'International': [],
-                                'Developed & Emerging Markets': []
                                 }
     
 @web.get("/")
@@ -48,6 +44,7 @@ async def Home():
 async def data(user : userinput):
     donation = pd.DataFrame()
     df, p_val, tstat, tcrit = dataMGMT(user.symbols)
+    
     cointegrated, X_train, X_test = cointegration(user.symbols)
     regime_predictions = regime_prediction(cointegrated, X_train, X_test, user.investment_amount)
     equal, equal_sharpe = equal_p(cointegrated, regime_predictions, X_test, user.investment_amount)
@@ -55,19 +52,23 @@ async def data(user : userinput):
     bottom_up, bottom_up_sharpe = bot_up_opti(cointegrated, regime_predictions, X_test, user.investment_amount)
     spo_portfolio, spo_portfolio_sharpe = spo(cointegrated, regime_predictions, X_test, user.investment_amount)
     portfolio_sharpe, portfolio_values = analyze(spo_portfolio, spo_portfolio_sharpe, bottom_up, bottom_up_sharpe, p_efficient_frontier, p_efficient_frontier_sharpe, equal, equal_sharpe)
+    etf_portfolio, etf_portfolio_sharpe = etf_strat(ETF_df, user.investment_amount)
+    
     donation['Equally Weighted'] = equal['Total Portfolio Value'] * 0.1 
     donation['Efficient Frontier'] = p_efficient_frontier['Total Portfolio Value'] * 0.1
     donation['Bottom Up'] = bottom_up['Total Portfolio Value'] * 0.1
     donation['SPO'] = spo_portfolio['Total Portfolio Value'] * 0.1
+    donation['ETF Portfolio'] = etf_portfolio['Total Portfolio Value'] * 0.1
     return portfolio_sharpe, portfolio_values, donation , equal, p_efficient_frontier, bottom_up, spo_portfolio
 
 @web.get("/portfolio")
-async def portfolio_visualize(equal, p_efficient_frontier, bottom_up, spo_portfolio, donation, portfolio_sharpe) :
+async def portfolio_visualize(equal, p_efficient_frontier, bottom_up, spo_portfolio, etf_portfolio, donation, portfolio_sharpe) :
     fig, ax = plt.subplots(1, 3, figsize = (10,6))
     equal['Total Portfolio Value after donation'] = equal['Total Portfolio Value'] - donation['Equally Weighted'] 
     p_efficient_frontier['Total Portfolio Value after donation'] = p_efficient_frontier['Total Portfolio Value'] - donation['Efficient Frontier'] 
     bottom_up['Total Portfolio Value after donation'] = bottom_up['Total Portfolio Value'] - donation['Bottom Up'] 
     spo_portfolio['Total Portfolio Value after donation'] = spo_portfolio['Total Portfolio Value'] - donation['SPO']
+    etf_portfolio['Total Portfolio Value after donation'] = etf_portfolio['Total Portfolio Value'] - donation['ETF Portfolio']
     
     ax[0].plot(equal['Total Portfolio Value after donation'], p_efficient_frontier['Total Portfolio Value after donation'], bottom_up['Total Portfolio Value after donation'], spo_portfolio['Total Portfolio Value after donation'])
     ax[0].set_title('4 different Portfolio Equity Curves')

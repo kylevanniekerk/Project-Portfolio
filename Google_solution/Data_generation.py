@@ -8,18 +8,17 @@ Created on Thu Feb 18 16:14:58 2021
 import numpy as np 
 import pandas as pd 
 import yfinance as yf
-import matplotlib.pyplot as plt
+import yahoo_fin.stock_info as si
+#import matplotlib.pyplot as plt
 from scipy.stats import t
 
 
 
-tickers = { 'Govenment' : ['XGB.TO', 'VGV.TO'],
-           'Candian Stocks' : ['BESG.TO', 'XCG.TO', 'XCV.TO', 'XCSR.TO', 'XESG.TO', 'GGRO.TO' ],
-           'US Stocks' : ['ESGV', 'VUG', 'VV', 'MGC', 'MGC', 'MGV', 'VOO', 'VOOG', 'VOOV', 'VTV', 'VIOO', 'VIOG', 'VIOV', 'VB', 'VBK', 'VBR', 'FCMO.TO', 'ESG.TO', 'XUS.TO', 'XUSR.TO', 'XSUS.TO', 'XMTM.TO'],
-           'US reits' : ['VNQ', 'XRE.TO'],
-           'International' : ['VSGX', 'VEA', 'VWO'],
-           'Developed & Emerging Markets' : ['VWOB', 'VGT', 'VDE', 'XEM.TO', 'VIU.TO', 'VEE.TO', 'VMO.TO', 'VVL.TO', 'VGRO.TO', 'EMB', 'ESGE'] 
-           }
+tickers = {'ETF' : ['XIC.TO', 'VUN.TO', 'AVUV', 'XEF.TO', 'AVDV', 'XEC.TO'],
+           'US Stocks' : ['MSFT', 'DIS', 'GOOGL', 'GOOG', 'DHR', 'MA', 'VRSK', 'LIN', 'AXP', 'COST', 'WM', 'CLX', 'AAPL', 
+                          'V', 'AMZN', 'AMAT', 'PG', 'MU', 'LRCX', 'HOLX', 'TMO', 'PRGO', 'MSI', 'ICE', 'SCHW', 'AMT', 'NVDA', 
+                          'HD', 'GPS', 'ECL', 'REGN', 'USFD', 'IBM', 'TFX', 'XYL', 'CERN', 'CMI', 'BABA', 'VZ', 'JKHY', 'RSG', 
+                          'DG', 'NTRS', 'IPG', 'TRMB', 'SJM', 'SWK', 'KKR', 'MRK', 'JNJ', 'JPM'] }
 
 def remove(D, a):
         values = D.pop(a)
@@ -28,64 +27,74 @@ def remove(D, a):
 
 def dataMGMT(dictionary):
     stock_list = []
-    for i in dictionary:
-        for n in dictionary[i]: # iterate for every stock indices
-            # Retrieve data from Yahoo! Finance
-            tickerData = yf.Ticker(n)
-            tickerDf1 = tickerData.history(period='1d', start='2011-01-01', end='2021-02-27')
-            # Save historical data 
-            tickerDf1['ticker'] = n # don't forget to specify the index
-            tickerDf1['asset class'] = i
-            tickerDf1['Returns'] = tickerDf1['Close']/tickerDf1['Close'].shift(1)
-            stock_list.append(tickerDf1)
+    etf_list = []
+    for key, i in dictionary.items():
+        if key == 'ETF':
+            for n in i:
+                # iterate for every stock indices
+                # Retrieve data from Yahoo! Finance
+                tickerDataETF = yf.Ticker(n)
+                tickerDfETF = tickerDataETF.history(period='1d', start='2011-01-01', end='2021-02-27')
+                # Save historical data 
+                tickerDfETF['ticker'] = n # don't forget to specify the index
+                tickerDfETF['asset class'] = key
+                tickerDfETF['Returns'] = tickerDfETF['Close']/tickerDfETF['Close'].shift(1)
+                etf_list.append(tickerDfETF)
+        else:
+            for n in i:
+                tickerDatastock = yf.Ticker(n)
+                tickerDfstock = tickerDatastock.history(period='1d', start='2011-01-01', end='2021-02-27')             
+                tickerDfstock['ticker'] = n # don't forget to specify the index
+                tickerDfstock['asset class'] = key
+                tickerDfstock['Returns'] = tickerDfstock['Close']/tickerDfstock['Close'].shift(1)
+                stock_list.append(tickerDfstock)
+                             
     # Concatenate all data
-    msi = pd.concat(stock_list, axis = 0)
-    # Transform the data to be ticker column-wise
+    msi_etf = pd.concat(etf_list, axis = 0)
+    msi_stock = pd.concat(stock_list, axis = 0)
+    
+    ETF_df = msi_etf.groupby(['Date', 'ticker'])['Close'].first().unstack()
+    ETF_df = ETF_df.bfill()
+    
+    ETF_rets = msi_etf.groupby(['Date', 'ticker'])['Returns'].first().unstack()
+    ETF_rets = ETF_rets.bfill()
+    #ETF_rets = ETF_rets.cumprod()
     
     # Transform the data to be ticker column-wise
-    Gross_rets = msi.groupby(['Date', 'ticker'])['Returns'].first().unstack()
+    Gross_rets = msi_stock.groupby(['Date', 'ticker'])['Returns'].first().unstack()
     Gross_rets = Gross_rets.bfill()
     rets = Gross_rets - 1
-    # Fill null values with the values on the row before
     
-    rets.head()
-    T = len(rets)
-    #rets = rets.fillna(method='bfill')
-    xrets = rets.values - rets['XGB.TO'].values.reshape(T,1)
-    xrets_df = pd.DataFrame(xrets, index = rets.index, columns = rets.columns)
+    rets_df = pd.DataFrame(rets, index = rets.index, columns = rets.columns)
     
-    xrets_df.head()
-    
-    prices_df = msi.groupby(['Date', 'ticker'])['Close'].first().unstack()
+    prices_df = msi_stock.groupby(['Date', 'ticker'])['Close'].first().unstack()
     prices_df = prices_df.bfill()
-    XGB = prices_df['XGB.TO']
-    VGV = prices_df['VGV.TO']
-    # T-Statistic test 
-                
-    T = len(xrets_df)
+   
+    # T-Statistic test           
+    T = len(rets_df)
     l_etf = []
     tcrit = t.pdf(1 - 0.01, T-1)
     
-    null = 0
-    se = np.std(xrets_df) / np.sqrt(T)
-    tstat = (np.mean(xrets_df) - null) / se
+    null = 0.10
+    se = np.std(rets_df) / np.sqrt(T)
+    tstat = (np.mean(rets_df) - null) / se
     p_val = 2*(1-t.cdf(abs(tstat), T-1))
     for i, n in enumerate(tstat):
         if abs(n) > tcrit:
             l_etf.append(tstat.index[i])
     
-    for i in dictionary:
-        for k in dictionary[i]:
-            if k not in l_etf:
-                prices_df = prices_df.drop(k, axis = 1)
-                tickers[i].remove(k)
-                
-    prices_df['XGB.TO'] = XGB
-    prices_df['VGV.TO'] = VGV
+    for key, i in dictionary.items():
+        if key != 'ETF':
+            for k in i:
+                if k not in l_etf:
+                    prices_df = prices_df.drop(k, axis = 1)
+                    tickers[key].remove(k)
     
-    return prices_df, p_val, tstat, tcrit, xrets_df
+    return prices_df, p_val, tstat, tcrit, rets_df, ETF_df
 
-prices_df, p_val, tstat, tcrit, xrets_df = dataMGMT(tickers)
+prices_df, p_val, tstat, tcrit, rets_df, ETF_df = dataMGMT(tickers)
+
+
 # =============================================================================
 # fig, axes = plt.subplots(3,2, figsize=(12, 8),sharex=True)
 # pagoda = ["#965757", "#D67469", "#4E5A44", "#A1B482", '#EFE482', "#99BFCF"] # for coloring
