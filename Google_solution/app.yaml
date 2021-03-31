@@ -2,3 +2,4 @@ runtime: python37
 entrypoint: gunicorn -w 4 -k uvicorn.workers.UvicornWorker protfolio_construction:port_api
 instance_class: F2
 
+

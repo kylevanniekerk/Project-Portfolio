@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd 
 from Data_generation import dataMGMT, ETF_df
-from protfolio_construction import cointegration, equal_p, efficient_frontier_p, bot_up_opti, spo, analyze, regime_prediction, etf_strat
+from portfolio_construction import cointegration, equal_p, efficient_frontier_p, bot_up_opti, spo, analyze, regime_prediction, etf_strat
 
 
 web = FastAPI()
@@ -29,12 +29,13 @@ web = FastAPI()
 # =============================================================================
 
 class userinput(BaseModel):
-    Risk_tolerance: int
-    investment_amount: int
+    investment_amount: int = 90000
     weights_ETF: list = [0.06, 0.1, 0.3, 0.08, 0.16, 0.3]
     symbols: Dict[str, list] = {'ETF Portfolio': ["XIC.TO", "VUN.TO", "AVUV", "XEF.TO", "AVDV", "XEC.TO"],
-                                'US Stocks': [],
-                                }
+                                'US Stocks': ['MSFT', 'DIS', 'GOOGL', 'GOOG', 'DHR', 'MA', 'VRSK', 'LIN', 'AXP', 'COST', 'WM', 'CLX', 'AAPL', 
+                          'V', 'AMZN', 'AMAT', 'PG', 'MU', 'LRCX', 'HOLX', 'TMO', 'PRGO', 'MSI', 'ICE', 'SCHW', 'AMT', 'NVDA', 
+                          'HD', 'GPS', 'ECL', 'REGN', 'USFD', 'IBM', 'TFX', 'XYL', 'CERN', 'CMI', 'BABA', 'VZ', 'JKHY', 'RSG', 
+                          'DG', 'NTRS', 'IPG', 'TRMB', 'SJM', 'SWK', 'KKR', 'MRK', 'JNJ', 'JPM'],}
     
 @web.get("/")
 async def Home():
@@ -86,7 +87,4 @@ async def portfolio_visualize(equal, p_efficient_frontier, bottom_up, spo_portfo
     
     return 
 
-
-if __name__ == '__port_api__':
-    uvicorn.run(web, host = '127.0.0.1', port = 8000)
 # uvicorn port_api:web --reload
