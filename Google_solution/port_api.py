@@ -87,4 +87,7 @@ async def portfolio_visualize(equal, p_efficient_frontier, bottom_up, spo_portfo
     
     return 
 
+if __name__ == "__main__":
+    uvicorn.run(web, host="0.0.0.0", port=8000)
+    
 # uvicorn port_api:web --reload
